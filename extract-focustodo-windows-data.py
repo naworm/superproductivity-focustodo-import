@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Extract FocusToDo task names and tag names from its WebView2 IndexedDB LevelDB store.
+"""Extract FocusToDo tasks, tags, and projects from its WebView2 IndexedDB LevelDB store.
 
 Works with Python 3.10+ and the standard library only. Close FocusToDo before running.
 
 Usage on Windows:
   py extract_focustodo.py "C:\\Users\\<user>\\AppData\\Local\\Packages\\52299SuperElement.119436511DDC8_792yctbvabkar"
 
-The script writes FocusToDo_tasks.csv and FocusToDo_tags.csv in the current directory.
+The script writes FocusToDo_tasks.csv, FocusToDo_tags.csv, and FocusToDo_projects.csv
+in the current directory.
 """
 from __future__ import annotations
 import argparse
 import csv
-import os
+from datetime import datetime, timezone
+import math
 import re
 import struct
 import sys
@@ -239,15 +241,23 @@ def latest_leveldb_records(db_dir: Path) -> dict[bytes, tuple[int, int, bytes]]:
     return current
 
 
-def property_string(value: bytes, property_name: str) -> str | None:
+def property_start(value: bytes, property_name: str) -> int | None:
     start = value.find(b"\xff\x15\xfe")
+    offset = 0
     if start >= 0:
         value = value[start:]
+        offset = start
     marker = b'"' + bytes([len(property_name)]) + property_name.encode("ascii")
     pos = value.find(marker)
     if pos < 0:
         return None
-    pos += len(marker)
+    return offset + pos + len(marker)
+
+
+def property_string(value: bytes, property_name: str) -> str | None:
+    pos = property_start(value, property_name)
+    if pos is None:
+        return None
     if pos >= len(value):
         return None
     tag = value[pos]
@@ -271,6 +281,39 @@ def property_string(value: bytes, property_name: str) -> str | None:
     return raw.decode("utf-16le", errors="replace")
 
 
+def property_typed(value: bytes, property_name: str, expected_tag: str):
+    pos = property_start(value, property_name)
+    if pos is None or pos >= len(value):
+        return None
+    tag = chr(value[pos])
+    pos += 1
+    if expected_tag == "B":
+        return tag == "T" if tag in ("T", "F") else None
+    if tag != expected_tag:
+        return None
+    if tag == "N":
+        if pos + 8 > len(value):
+            return None
+        number = struct.unpack_from("<d", value, pos)[0]
+        return number if math.isfinite(number) else None
+    if tag == "I":
+        try:
+            number, _ = varint(value, pos)
+        except ValueError:
+            return None
+        return (number >> 1) ^ -(number & 1)
+    return None
+
+
+def timestamp_utc(milliseconds) -> str:
+    if milliseconds in (None, 0):
+        return ""
+    try:
+        return datetime.fromtimestamp(milliseconds / 1000, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
 def extract_objects(db_dir: Path):
     records = latest_leveldb_records(db_dir)
     objects = []
@@ -283,14 +326,50 @@ def extract_objects(db_dir: Path):
         obj_id = property_string(value, "id")
         if not obj_id:
             continue
-        objects.append({
+        obj = {
             "id": obj_id,
             "type": obj_type,
             "name": property_string(value, "name") or "",
             "tags_raw": property_string(value, "tags") or "",
             "project_id": property_string(value, "projectId") or "",
             "sequence": sequence,
-        })
+        }
+        if obj_type == "TASK":
+            for field, source, tag in (
+                ("creationDateN_ms", "creationDate", "N"),
+                ("deadlineN_ms", "deadline", "N"),
+                ("finishedDateN_ms", "finishedDate", "N"),
+                ("endDateN_ms", "endDate", "N"),
+                ("stateI", "state", "I"),
+                ("priorityI", "priority", "I"),
+                ("estimatePomoNumI", "estimatePomoNum", "I"),
+                ("estimatedPomoNumI", "estimatedPomoNum", "I"),
+                ("actualPomoNumI", "actualPomoNum", "I"),
+                ("pomodoroIntervalI", "pomodoroInterval", "I"),
+                ("reminderDateI", "reminderDate", "I"),
+                ("rCycleI", "rCycle", "I"),
+                ("rFirstDeadlineI", "rFirstDeadline", "I"),
+                ("rStartDateI", "rStartDate", "I"),
+                ("rEndDateI", "rEndDate", "I"),
+                ("orderI", "order", "I"),
+                ("orderN", "order", "N"),
+            ):
+                obj[field] = property_typed(value, source, tag)
+            for field, source in (("rUnit", "rUnit"), ("rValue", "rValue"), ("remark", "remark")):
+                obj[field] = property_string(value, source) or ""
+            for field, source in (("isFinished", "isFinished"), ("hasSubtask", "hasSubtask"), ("isExpanded", "isExpanded")):
+                obj[field] = property_typed(value, source, "B")
+        elif obj_type == "PROJECT":
+            obj.update({
+                "color": property_string(value, "color") or "",
+                "parent_id": property_string(value, "parentId") or "",
+                "typeI": property_typed(value, "type", "I"),
+                "orderI": property_typed(value, "order", "I"),
+                "orderN": property_typed(value, "order", "N"),
+                "is_default": property_typed(value, "isDefault", "B"),
+                "image_name": property_string(value, "imageName") or "",
+            })
+        objects.append(obj)
     return objects
 
 
@@ -310,29 +389,90 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
         task_rows.append({
             "task_id": task["id"],
             "task_name": task["name"],
+            "project_id": task["project_id"],
+            "project_name": projects.get(task["project_id"], ""),
             "tags": "; ".join(tag_names.get(x, f"[ID inconnu: {x}]") for x in ids),
             "tag_ids": "; ".join(ids),
+            "creationDateN_ms": task["creationDateN_ms"],
+            "created_at_utc": timestamp_utc(task["creationDateN_ms"]),
+            "deadlineN_ms": task["deadlineN_ms"],
+            "deadline_at_utc": timestamp_utc(task["deadlineN_ms"]),
+            "finishedDateN_ms": task["finishedDateN_ms"],
+            "finished_at_utc": timestamp_utc(task["finishedDateN_ms"]),
+            "endDateN_ms": task["endDateN_ms"],
+            "end_at_utc": timestamp_utc(task["endDateN_ms"]),
+            "stateI": task["stateI"],
+            "isFinishedF": task["isFinished"] is False,
+            "isFinishedT": task["isFinished"] is True,
+            "priorityI": task["priorityI"],
+            "estimatePomoNumI": task["estimatePomoNumI"],
+            "estimatedPomoNumI": task["estimatedPomoNumI"],
+            "actualPomoNumI": task["actualPomoNumI"],
+            "pomodoroIntervalI": task["pomodoroIntervalI"],
+            "reminderDateI": task["reminderDateI"],
+            "remark": task["remark"],
+            "rCycleI": task["rCycleI"],
+            "rFirstDeadlineI": task["rFirstDeadlineI"],
+            "rUnit": task["rUnit"],
+            "rValue": task["rValue"],
+            "rStartDateI": task["rStartDateI"],
+            "rEndDateI": task["rEndDateI"],
+            "hasSubtaskF": task["hasSubtask"] is False,
+            "hasSubtaskT": task["hasSubtask"] is True,
+            "isExpandedF": task["isExpanded"] is False,
+            "orderI": task["orderI"],
+            "orderN": task["orderN"],
         })
     task_rows.sort(key=lambda x: (x["task_name"].casefold(), x["task_id"]))
+    project_rows = []
+    for project in objects:
+        if project["type"] != "PROJECT":
+            continue
+        project_rows.append({
+            "project_id": project["id"],
+            "project_name": project["name"],
+            "color": project["color"],
+            "parent_id": project["parent_id"],
+            "type": project["typeI"],
+            "order": project["orderI"] if project["orderI"] is not None else project["orderN"],
+            "is_default": project["is_default"],
+            "image_name": project["image_name"],
+        })
+    project_rows.sort(key=lambda x: (x["project_name"].casefold(), x["project_id"]))
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "FocusToDo_tasks.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["task_id", "task_name", "tags", "tag_ids"], delimiter=";")
+        task_fields = [
+            "task_id", "task_name", "project_id", "project_name", "tags", "tag_ids",
+            "creationDateN_ms", "created_at_utc", "deadlineN_ms", "deadline_at_utc",
+            "finishedDateN_ms", "finished_at_utc", "endDateN_ms", "end_at_utc", "stateI",
+            "isFinishedF", "isFinishedT", "priorityI", "estimatePomoNumI", "estimatedPomoNumI",
+            "actualPomoNumI", "pomodoroIntervalI", "reminderDateI", "remark", "rCycleI",
+            "rFirstDeadlineI", "rUnit", "rValue", "rStartDateI", "rEndDateI", "hasSubtaskF",
+            "hasSubtaskT", "isExpandedF", "orderI", "orderN",
+        ]
+        writer = csv.DictWriter(f, fieldnames=task_fields, delimiter=";")
         writer.writeheader()
         writer.writerows(task_rows)
     with (output_dir / "FocusToDo_tags.csv").open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["tag_id", "tag_name", "task_count"], delimiter=";")
         writer.writeheader()
         writer.writerows(tag_rows)
+    with (output_dir / "FocusToDo_projects.csv").open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["project_id", "project_name", "color", "parent_id", "type", "order", "is_default", "image_name"], delimiter=";")
+        writer.writeheader()
+        writer.writerows(project_rows)
     missing_names = [x["id"] for x in tasks if not x["name"]]
     print(f"Base IndexedDB : {db_dir}")
     print(f"Tâches exportées : {len(task_rows)}")
     print(f"Tags distincts référencés : {len(tag_rows)}")
+    print(f"Projets exportés : {len(project_rows)}")
     print(f"Tâches sans nom décodé : {len(missing_names)}")
     if missing_names:
         print("Identifiants concernés : " + ", ".join(missing_names))
     print("Fichiers écrits :")
     print(" - " + str(output_dir / "FocusToDo_tasks.csv"))
     print(" - " + str(output_dir / "FocusToDo_tags.csv"))
+    print(" - " + str(output_dir / "FocusToDo_projects.csv"))
 
 
 def main():

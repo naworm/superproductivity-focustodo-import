@@ -38,7 +38,18 @@ def day_from_timestamp(value: Any) -> str | None:
 
 
 def task_tag_ids(value: str, valid_ids: set[str]) -> list[str]:
-    return [tag_id for tag_id in value.split(",") if tag_id and tag_id in valid_ids]
+    return [tag_id.strip() for tag_id in value.replace(";", ",").split(",") if tag_id.strip() in valid_ids]
+
+
+def add_aliases(rows: list[dict[str, str]], aliases: dict[str, str]) -> list[dict[str, str]]:
+    normalized_rows = []
+    for row in rows:
+        normalized = dict(row)
+        for target, source in aliases.items():
+            if target not in normalized and source in row:
+                normalized[target] = row[source]
+        normalized_rows.append(normalized)
+    return normalized_rows
 
 
 def make_task(row: dict[str, str], project_id: str, tag_ids: set[str], template_task: dict[str, Any]) -> dict[str, Any]:
@@ -68,8 +79,8 @@ def make_task(row: dict[str, str], project_id: str, tag_ids: set[str], template_
 
 
 def project_tree(project_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
-    folders = {row["id"]: row for row in project_rows if row.get("type") == "1000"}
-    projects = [row for row in project_rows if row.get("type") == "2000"]
+    folders = {row["id"]: row for row in project_rows if row.get("type") == "2000"}
+    projects = [row for row in project_rows if row.get("type") == "1000"]
     nodes: dict[str, dict[str, Any]] = {
         folder_id: {
             "k": "f",
@@ -136,7 +147,20 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
         raise ValueError("Le modèle doit contenir le projet INBOX_PROJECT.")
     template_tag = next(iter(tag_entities.values()), {"theme": {}})
 
-    imported_projects = [row for row in project_rows if row.get("type") == "2000"]
+    task_rows = add_aliases(task_rows, {
+        "id": "task_id", "name": "task_name", "projectId": "project_id",
+        "creationDate": "creationDateN_ms", "deadline": "deadlineN_ms",
+        "finishedDate": "finishedDateN_ms", "actualPomoNum": "actualPomoNumI",
+        "estimatePomoNum": "estimatePomoNumI", "pomodoroInterval": "pomodoroIntervalI",
+        "order": "orderI", "isFinished": "isFinishedT",
+    })
+    tag_rows = add_aliases(tag_rows, {"id": "tag_id", "name": "tag_name"})
+    project_rows = add_aliases(project_rows, {
+        "id": "project_id", "name": "project_name", "parentId": "parent_id",
+        "isDefault": "is_default",
+    })
+
+    imported_projects = [row for row in project_rows if row.get("type") == "1000"]
     project_ids = {row["id"] for row in imported_projects}
     project_entities_out = {INBOX_PROJECT_ID: copy.deepcopy(inbox_template)}
     project_entities_out[INBOX_PROJECT_ID]["taskIds"] = []
@@ -229,7 +253,7 @@ def main() -> None:
         destination.write("\n")
     print(f"JSON Super Productivity créé : {output}")
     print(f"Tâches : {len(result['data']['task']['ids'])}")
-    print(f"Projets importés : {len(project_ids := [row for row in read_csv(args.projects.expanduser()) if row.get('type') == '2000'])}")
+    print(f"Projets importés : {len([project_id for project_id in result['data']['project']['ids'] if project_id != INBOX_PROJECT_ID])}")
     print(f"Tags importés : {len(read_csv(args.tags.expanduser()))}")
 
 

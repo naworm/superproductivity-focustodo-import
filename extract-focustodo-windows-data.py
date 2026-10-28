@@ -364,6 +364,7 @@ def extract_objects(db_dir: Path):
                 "color": property_string(value, "color") or "",
                 "parent_id": property_string(value, "parentId") or "",
                 "typeI": property_typed(value, "type", "I"),
+                "stateI": property_typed(value, "state", "I"),
                 "orderI": property_typed(value, "order", "I"),
                 "orderN": property_typed(value, "order", "N"),
                 "is_default": property_typed(value, "isDefault", "B"),
@@ -374,16 +375,23 @@ def extract_objects(db_dir: Path):
 
 
 def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
-    tasks = [x for x in objects if x["type"] == "TASK"]
-    project_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] in (1000, 2000)]
-    tag_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] == 3000]
+    all_tasks = [x for x in objects if x["type"] == "TASK"]
+    deleted_tasks = [x for x in all_tasks if x["stateI"] == -1]
+    tasks = [x for x in all_tasks if x["stateI"] != -1]
+    all_project_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] in (1000, 2000)]
+    deleted_projects = [x for x in all_project_objects if x["stateI"] == -1]
+    project_objects = [x for x in all_project_objects if x["stateI"] != -1]
+    all_tag_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] == 3000]
+    deleted_tags = [x for x in all_tag_objects if x["stateI"] == -1]
+    tag_objects = [x for x in all_tag_objects if x["stateI"] != -1]
     projects = {x["id"]: x["name"] for x in project_objects if x["name"]}
     project_by_id = {x["id"]: x for x in project_objects}
     project_task_counts: Counter[str] = Counter(x["project_id"] for x in tasks if x["project_id"])
     task_tag_refs: Counter[str] = Counter()
     for task in tasks:
         task_tag_refs.update(x for x in task["tags_raw"].split(",") if x)
-    tag_by_id = {x["id"]: x for x in tag_objects}
+    tag_by_id = {x["id"]: x for x in all_tag_objects}
+    tag_name_by_id = {x["id"]: x["name"] for x in all_tag_objects}
     tag_rows = [
         {
             "tag_id": tag["id"],
@@ -398,7 +406,6 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
         if tag_id not in tag_by_id:
             tag_rows.append({"tag_id": tag_id, "tag_name": "[nom introuvable]", "color": "", "order": None, "task_count": task_count})
     tag_rows.sort(key=lambda x: (x["tag_name"].casefold(), x["tag_id"]))
-    tag_names = {x["tag_id"]: x["tag_name"] for x in tag_rows}
     task_rows = []
     for task in tasks:
         ids = [x for x in task["tags_raw"].split(",") if x]
@@ -407,7 +414,7 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
             "task_name": task["name"],
             "project_id": task["project_id"],
             "project_name": projects.get(task["project_id"], ""),
-            "tags": "; ".join(tag_names.get(x, f"[ID inconnu: {x}]") for x in ids),
+            "tags": "; ".join(tag_name_by_id.get(x, f"[ID inconnu: {x}]") for x in ids),
             "tag_ids": "; ".join(ids),
             "creationDateN_ms": task["creationDateN_ms"],
             "created_at_utc": timestamp_utc(task["creationDateN_ms"]),
@@ -417,7 +424,6 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
             "finished_at_utc": timestamp_utc(task["finishedDateN_ms"]),
             "endDateN_ms": task["endDateN_ms"],
             "end_at_utc": timestamp_utc(task["endDateN_ms"]),
-            "stateI": task["stateI"],
             "isFinishedF": task["isFinished"] is False,
             "isFinishedT": task["isFinished"] is True,
             "priorityI": task["priorityI"],
@@ -449,6 +455,7 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
             "parent_id": project["parent_id"],
             "parent_name": project_by_id.get(project["parent_id"], {}).get("name", ""),
             "type": project["typeI"],
+            "object_kind": {1000: "PROJECT", 2000: "FOLDER"}.get(project["typeI"], "UNKNOWN"),
             "order": project["orderI"] if project["orderI"] is not None else project["orderN"],
             "is_default": project["is_default"],
             "image_name": project["image_name"],
@@ -460,7 +467,7 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
         task_fields = [
             "task_id", "task_name", "project_id", "project_name", "tags", "tag_ids",
             "creationDateN_ms", "created_at_utc", "deadlineN_ms", "deadline_at_utc",
-            "finishedDateN_ms", "finished_at_utc", "endDateN_ms", "end_at_utc", "stateI",
+            "finishedDateN_ms", "finished_at_utc", "endDateN_ms", "end_at_utc",
             "isFinishedF", "isFinishedT", "priorityI", "estimatePomoNumI", "estimatedPomoNumI",
             "actualPomoNumI", "pomodoroIntervalI", "reminderDateI", "remark", "rCycleI",
             "rFirstDeadlineI", "rUnit", "rValue", "rStartDateI", "rEndDateI", "hasSubtaskF",
@@ -474,12 +481,15 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
         writer.writeheader()
         writer.writerows(tag_rows)
     with (output_dir / "FocusToDo_projects.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["project_id", "project_name", "color", "parent_id", "parent_name", "type", "order", "is_default", "image_name", "task_count"], delimiter=";")
+        writer = csv.DictWriter(f, fieldnames=["project_id", "project_name", "color", "parent_id", "parent_name", "type", "object_kind", "order", "is_default", "image_name", "task_count"], delimiter=";")
         writer.writeheader()
         writer.writerows(project_rows)
     missing_names = [x["id"] for x in tasks if not x["name"]]
     print(f"Base IndexedDB : {db_dir}")
     print(f"Tâches exportées : {len(task_rows)}")
+    print(f"Tâches supprimées exclues : {len(deleted_tasks)}")
+    print(f"Tags supprimés exclus : {len(deleted_tags)}")
+    print(f"Projets/dossiers supprimés exclus : {len(deleted_projects)}")
     print(f"Tags distincts référencés : {len(tag_rows)}")
     print(f"Projets exportés : {len(project_rows)}")
     print(f"Tâches sans nom décodé : {len(missing_names)}")

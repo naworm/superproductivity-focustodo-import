@@ -154,6 +154,9 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
         "estimatePomoNum": "estimatePomoNumI", "pomodoroInterval": "pomodoroIntervalI",
         "order": "orderI", "isFinished": "isFinishedT",
     })
+    for row in task_rows:
+        if row.get("tag_ids"):
+            row["tags"] = row["tag_ids"]
     tag_rows = add_aliases(tag_rows, {"id": "tag_id", "name": "tag_name"})
     project_rows = add_aliases(project_rows, {
         "id": "project_id", "name": "project_name", "parentId": "parent_id",

@@ -375,13 +375,29 @@ def extract_objects(db_dir: Path):
 
 def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
     tasks = [x for x in objects if x["type"] == "TASK"]
-    projects = {x["id"]: x["name"] for x in objects if x["type"] == "PROJECT" and x["name"]}
+    project_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] in (1000, 2000)]
+    tag_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] == 3000]
+    projects = {x["id"]: x["name"] for x in project_objects if x["name"]}
+    project_by_id = {x["id"]: x for x in project_objects}
+    project_task_counts: Counter[str] = Counter(x["project_id"] for x in tasks if x["project_id"])
     task_tag_refs: Counter[str] = Counter()
     for task in tasks:
         task_tag_refs.update(x for x in task["tags_raw"].split(",") if x)
-    tag_rows = []
-    for tag_id, task_count in sorted(task_tag_refs.items(), key=lambda item: (projects.get(item[0], "").casefold(), item[0])):
-        tag_rows.append({"tag_id": tag_id, "tag_name": projects.get(tag_id, "[nom introuvable]"), "task_count": task_count})
+    tag_by_id = {x["id"]: x for x in tag_objects}
+    tag_rows = [
+        {
+            "tag_id": tag["id"],
+            "tag_name": tag["name"],
+            "color": tag["color"],
+            "order": tag["orderI"] if tag["orderI"] is not None else tag["orderN"],
+            "task_count": task_tag_refs.get(tag["id"], 0),
+        }
+        for tag in tag_objects
+    ]
+    for tag_id, task_count in task_tag_refs.items():
+        if tag_id not in tag_by_id:
+            tag_rows.append({"tag_id": tag_id, "tag_name": "[nom introuvable]", "color": "", "order": None, "task_count": task_count})
+    tag_rows.sort(key=lambda x: (x["tag_name"].casefold(), x["tag_id"]))
     tag_names = {x["tag_id"]: x["tag_name"] for x in tag_rows}
     task_rows = []
     for task in tasks:
@@ -425,18 +441,18 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
         })
     task_rows.sort(key=lambda x: (x["task_name"].casefold(), x["task_id"]))
     project_rows = []
-    for project in objects:
-        if project["type"] != "PROJECT":
-            continue
+    for project in project_objects:
         project_rows.append({
             "project_id": project["id"],
             "project_name": project["name"],
             "color": project["color"],
             "parent_id": project["parent_id"],
+            "parent_name": project_by_id.get(project["parent_id"], {}).get("name", ""),
             "type": project["typeI"],
             "order": project["orderI"] if project["orderI"] is not None else project["orderN"],
             "is_default": project["is_default"],
             "image_name": project["image_name"],
+            "task_count": project_task_counts.get(project["id"], 0),
         })
     project_rows.sort(key=lambda x: (x["project_name"].casefold(), x["project_id"]))
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -454,11 +470,11 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
         writer.writeheader()
         writer.writerows(task_rows)
     with (output_dir / "FocusToDo_tags.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["tag_id", "tag_name", "task_count"], delimiter=";")
+        writer = csv.DictWriter(f, fieldnames=["tag_id", "tag_name", "color", "order", "task_count"], delimiter=";")
         writer.writeheader()
         writer.writerows(tag_rows)
     with (output_dir / "FocusToDo_projects.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["project_id", "project_name", "color", "parent_id", "type", "order", "is_default", "image_name"], delimiter=";")
+        writer = csv.DictWriter(f, fieldnames=["project_id", "project_name", "color", "parent_id", "parent_name", "type", "order", "is_default", "image_name", "task_count"], delimiter=";")
         writer.writeheader()
         writer.writerows(project_rows)
     missing_names = [x["id"] for x in tasks if not x["name"]]

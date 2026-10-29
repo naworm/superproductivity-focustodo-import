@@ -394,8 +394,8 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
     tag_name_by_id = {x["id"]: x["name"] for x in all_tag_objects}
     tag_rows = [
         {
-            "tag_id": tag["id"],
-            "tag_name": tag["name"],
+            "id": tag["id"],
+            "name": tag["name"],
             "color": tag["color"],
             "order": tag["orderI"] if tag["orderI"] is not None else tag["orderN"],
             "task_count": task_tag_refs.get(tag["id"], 0),
@@ -404,84 +404,81 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
     ]
     for tag_id, task_count in task_tag_refs.items():
         if tag_id not in tag_by_id:
-            tag_rows.append({"tag_id": tag_id, "tag_name": "[name not found]", "color": "", "order": None, "task_count": task_count})
-    tag_rows.sort(key=lambda x: (x["tag_name"].casefold(), x["tag_id"]))
+            tag_rows.append({"id": tag_id, "name": "[name not found]", "color": "", "order": None, "task_count": task_count})
+    tag_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))
     task_rows = []
     for task in tasks:
         ids = [x for x in task["tags_raw"].split(",") if x]
         task_rows.append({
-            "task_id": task["id"],
-            "task_name": task["name"],
-            "project_id": task["project_id"],
+            "id": task["id"],
+            "name": task["name"],
+            "projectId": task["project_id"],
             "project_name": projects.get(task["project_id"], ""),
-            "tags": "; ".join(tag_name_by_id.get(x, f"[unknown ID: {x}]") for x in ids),
-            "tag_ids": "; ".join(ids),
-            "creationDateN_ms": task["creationDateN_ms"],
+            "tags": task["tags_raw"],
+            "tag_names": "; ".join(tag_name_by_id.get(x, f"[unknown ID: {x}]") for x in ids),
+            "creationDate": task["creationDateN_ms"],
             "created_at_utc": timestamp_utc(task["creationDateN_ms"]),
-            "deadlineN_ms": task["deadlineN_ms"],
+            "deadline": task["deadlineN_ms"],
             "deadline_at_utc": timestamp_utc(task["deadlineN_ms"]),
-            "finishedDateN_ms": task["finishedDateN_ms"],
+            "finishedDate": task["finishedDateN_ms"],
             "finished_at_utc": timestamp_utc(task["finishedDateN_ms"]),
-            "endDateN_ms": task["endDateN_ms"],
+            "endDate": task["endDateN_ms"],
             "end_at_utc": timestamp_utc(task["endDateN_ms"]),
-            "isFinishedF": task["isFinished"] is False,
-            "isFinishedT": task["isFinished"] is True,
-            "priorityI": task["priorityI"],
-            "estimatePomoNumI": task["estimatePomoNumI"],
-            "estimatedPomoNumI": task["estimatedPomoNumI"],
-            "actualPomoNumI": task["actualPomoNumI"],
-            "pomodoroIntervalI": task["pomodoroIntervalI"],
-            "reminderDateI": task["reminderDateI"],
+            "isFinished": task["isFinished"],
+            "priority": task["priorityI"],
+            "estimatePomoNum": task["estimatePomoNumI"],
+            "estimatedPomoNum": task["estimatedPomoNumI"],
+            "actualPomoNum": task["actualPomoNumI"],
+            "pomodoroInterval": task["pomodoroIntervalI"],
+            "reminderDate": task["reminderDateI"],
             "remark": task["remark"],
-            "rCycleI": task["rCycleI"],
-            "rFirstDeadlineI": task["rFirstDeadlineI"],
+            "rCycle": task["rCycleI"],
+            "rFirstDeadline": task["rFirstDeadlineI"],
             "rUnit": task["rUnit"],
             "rValue": task["rValue"],
-            "rStartDateI": task["rStartDateI"],
-            "rEndDateI": task["rEndDateI"],
-            "hasSubtaskF": task["hasSubtask"] is False,
-            "hasSubtaskT": task["hasSubtask"] is True,
-            "isExpandedF": task["isExpanded"] is False,
-            "orderI": task["orderI"],
-            "orderN": task["orderN"],
+            "rStartDate": task["rStartDateI"],
+            "rEndDate": task["rEndDateI"],
+            "hasSubtask": task["hasSubtask"],
+            "isExpanded": task["isExpanded"],
+            "order": task["orderI"] if task["orderI"] is not None else task["orderN"],
         })
-    task_rows.sort(key=lambda x: (x["task_name"].casefold(), x["task_id"]))
+    task_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))
     project_rows = []
     for project in project_objects:
         project_rows.append({
-            "project_id": project["id"],
-            "project_name": project["name"],
+            "id": project["id"],
+            "name": project["name"],
             "color": project["color"],
-            "parent_id": project["parent_id"],
+            "parentId": project["parent_id"],
             "parent_name": project_by_id.get(project["parent_id"], {}).get("name", ""),
             "type": project["typeI"],
             "object_kind": {1000: "PROJECT", 2000: "FOLDER"}.get(project["typeI"], "UNKNOWN"),
             "order": project["orderI"] if project["orderI"] is not None else project["orderN"],
-            "is_default": project["is_default"],
-            "image_name": project["image_name"],
+            "isDefault": project["is_default"],
+            "imageName": project["image_name"],
             "task_count": project_task_counts.get(project["id"], 0),
         })
-    project_rows.sort(key=lambda x: (x["project_name"].casefold(), x["project_id"]))
+    project_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "FocusToDo_tasks.csv").open("w", encoding="utf-8-sig", newline="") as f:
         task_fields = [
-            "task_id", "task_name", "project_id", "project_name", "tags", "tag_ids",
-            "creationDateN_ms", "created_at_utc", "deadlineN_ms", "deadline_at_utc",
-            "finishedDateN_ms", "finished_at_utc", "endDateN_ms", "end_at_utc",
-            "isFinishedF", "isFinishedT", "priorityI", "estimatePomoNumI", "estimatedPomoNumI",
-            "actualPomoNumI", "pomodoroIntervalI", "reminderDateI", "remark", "rCycleI",
-            "rFirstDeadlineI", "rUnit", "rValue", "rStartDateI", "rEndDateI", "hasSubtaskF",
-            "hasSubtaskT", "isExpandedF", "orderI", "orderN",
+            "id", "name", "projectId", "project_name", "tags", "tag_names",
+            "creationDate", "created_at_utc", "deadline", "deadline_at_utc",
+            "finishedDate", "finished_at_utc", "endDate", "end_at_utc",
+            "isFinished", "priority", "estimatePomoNum", "estimatedPomoNum",
+            "actualPomoNum", "pomodoroInterval", "reminderDate", "remark", "rCycle",
+            "rFirstDeadline", "rUnit", "rValue", "rStartDate", "rEndDate", "hasSubtask",
+            "isExpanded", "order",
         ]
         writer = csv.DictWriter(f, fieldnames=task_fields, delimiter=";")
         writer.writeheader()
         writer.writerows(task_rows)
     with (output_dir / "FocusToDo_tags.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["tag_id", "tag_name", "color", "order", "task_count"], delimiter=";")
+        writer = csv.DictWriter(f, fieldnames=["id", "name", "color", "order", "task_count"], delimiter=";")
         writer.writeheader()
         writer.writerows(tag_rows)
     with (output_dir / "FocusToDo_projects.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["project_id", "project_name", "color", "parent_id", "parent_name", "type", "object_kind", "order", "is_default", "image_name", "task_count"], delimiter=";")
+        writer = csv.DictWriter(f, fieldnames=["id", "name", "color", "parentId", "parent_name", "type", "object_kind", "order", "isDefault", "imageName", "task_count"], delimiter=";")
         writer.writeheader()
         writer.writerows(project_rows)
     missing_names = [x["id"] for x in tasks if not x["name"]]

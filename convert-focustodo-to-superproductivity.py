@@ -56,7 +56,8 @@ def add_aliases(rows: list[dict[str, str]], aliases: dict[str, str]) -> list[dic
 def make_task(row: dict[str, str], project_id: str, tag_ids: set[str], template_task: dict[str, Any]) -> dict[str, Any]:
     interval_ms = max(0, number(row.get("pomodoroInterval"))) * 1000
     created = timestamp(row.get("creationDate"))
-    is_done = row.get("isFinished", "").strip().lower() == "true"
+    is_finished = row.get("isFinished", "")
+    is_done = is_finished if isinstance(is_finished, bool) else str(is_finished).strip().lower() == "true"
     finished = timestamp(row.get("finishedDate"))
     done_at = finished if is_done and finished > 0 else created
 
@@ -151,17 +152,23 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
     task_rows = add_aliases(task_rows, {
         "id": "task_id", "name": "task_name", "projectId": "project_id",
         "creationDate": "creationDateN_ms", "deadline": "deadlineN_ms",
-        "finishedDate": "finishedDateN_ms", "actualPomoNum": "actualPomoNumI",
-        "estimatePomoNum": "estimatePomoNumI", "pomodoroInterval": "pomodoroIntervalI",
+        "finishedDate": "finishedDateN_ms", "endDate": "endDateN_ms",
+        "priority": "priorityI", "actualPomoNum": "actualPomoNumI",
+        "estimatePomoNum": "estimatePomoNumI", "estimatedPomoNum": "estimatedPomoNumI",
+        "pomodoroInterval": "pomodoroIntervalI", "reminderDate": "reminderDateI",
         "order": "orderI", "isFinished": "isFinishedT",
     })
     for row in task_rows:
-        if row.get("tag_ids"):
+        if "tag_ids" in row:
             row["tags"] = row["tag_ids"]
+        if "isFinishedF" in row or "isFinishedT" in row:
+            row["isFinished"] = row.get("isFinishedT", "").strip().lower() == "true"
+        if "orderN" in row and not row.get("order"):
+            row["order"] = row["orderN"]
     tag_rows = add_aliases(tag_rows, {"id": "tag_id", "name": "tag_name"})
     project_rows = add_aliases(project_rows, {
         "id": "project_id", "name": "project_name", "parentId": "parent_id",
-        "isDefault": "is_default",
+        "isDefault": "is_default", "imageName": "image_name",
     })
 
     imported_projects = [row for row in project_rows if row.get("type") == "1000"]

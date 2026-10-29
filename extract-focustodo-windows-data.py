@@ -4,7 +4,8 @@
 Works with Python 3.10+ and the standard library only. Close FocusToDo before running.
 
 Usage on Windows:
-  py extract_focustodo.py "C:\\Users\\<user>\\AppData\\Local\\Packages\\52299SuperElement.119436511DDC8_792yctbvabkar"
+    py extract-focustodo-windows-data.py
+    py extract-focustodo-windows-data.py "C:\\path\\to\\FocusToDo data folder"
 
 The script writes FocusToDo_tasks.csv, FocusToDo_tags.csv, and FocusToDo_projects.csv
 in the current directory.
@@ -14,6 +15,7 @@ import argparse
 import csv
 from datetime import datetime, timezone
 import math
+import os
 import re
 import struct
 import sys
@@ -21,6 +23,7 @@ from pathlib import Path
 from collections import Counter
 
 DB_RELATIVE = Path("LocalState") / "EBWebView" / "Default" / "IndexedDB" / "file__0.indexeddb.leveldb"
+DEFAULT_DATA_PATH = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Packages" / "52299SuperElement.119436511DDC8_792yctbvabkar"
 
 
 def varint(data: bytes, pos: int) -> tuple[int, int]:
@@ -500,7 +503,8 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Export FocusToDo tasks and tags from the WebView2 IndexedDB")
-    parser.add_argument("data_path", type=Path, help="FocusToDo data folder or IndexedDB folder")
+    parser.add_argument("data_path", nargs="?", type=Path, default=DEFAULT_DATA_PATH,
+                        help=f"FocusToDo data folder or IndexedDB folder (default: {DEFAULT_DATA_PATH})")
     parser.add_argument("--out", type=Path, default=Path.cwd(), help="Output folder (defaults to the current directory)")
     args = parser.parse_args()
     db_dir = locate_db(args.data_path.expanduser().resolve())

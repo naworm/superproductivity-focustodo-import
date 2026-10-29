@@ -7,18 +7,15 @@ Usage on Windows:
     py extract-focustodo-windows-data.py
     py extract-focustodo-windows-data.py "C:\\path\\to\\FocusToDo data folder"
     py extract-focustodo-windows-data.py --out "C:\\path\\to\\exports"
-    py extract-focustodo-windows-data.py --raw-json --out "C:\\path\\to\\exports"
 
 The positional path can be the FocusToDo data folder or the IndexedDB folder.
-By default, the script writes FocusToDo_tasks.csv, FocusToDo_tags.csv, and
-FocusToDo_projects.csv in the current directory. Use --out to choose another
-output directory. With --raw-json, it writes FocusToDo_indexeddb_raw.json instead.
+By default, the script writes FocusToDo_indexeddb_raw.json in the current
+directory. Use --out to choose another output directory. To export CSV files,
+run export-focustodo-windows-csv.py.
 """
 from __future__ import annotations
 import argparse
 import base64
-import csv
-from datetime import datetime, timezone
 import json
 import math
 import os
@@ -26,7 +23,6 @@ import re
 import struct
 import sys
 from pathlib import Path
-from collections import Counter
 
 DB_RELATIVE = Path("LocalState") / "EBWebView" / "Default" / "IndexedDB" / "file__0.indexeddb.leveldb"
 DEFAULT_DATA_PATH = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Packages" / "52299SuperElement.119436511DDC8_792yctbvabkar"
@@ -314,15 +310,6 @@ def property_typed(value: bytes, property_name: str, expected_tag: str):
     return None
 
 
-def timestamp_utc(milliseconds) -> str:
-    if milliseconds in (None, 0):
-        return ""
-    try:
-        return datetime.fromtimestamp(milliseconds / 1000, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    except (OverflowError, OSError, ValueError):
-        return ""
-
-
 def extract_objects(db_dir: Path, records: dict[bytes, tuple[int, int, bytes]] | None = None):
     if records is None:
         records = latest_leveldb_records(db_dir)
@@ -410,149 +397,19 @@ def write_raw_json(records: dict[bytes, tuple[int, int, bytes]], output_file: Pa
         file.write("\n")
 
 
-def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
-    all_tasks = [x for x in objects if x["type"] == "TASK"]
-    deleted_tasks = [x for x in all_tasks if x["stateI"] == -1]
-    tasks = [x for x in all_tasks if x["stateI"] != -1]
-    all_project_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] in (1000, 2000)]
-    deleted_projects = [x for x in all_project_objects if x["stateI"] == -1]
-    project_objects = [x for x in all_project_objects if x["stateI"] != -1]
-    all_tag_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] == 3000]
-    deleted_tags = [x for x in all_tag_objects if x["stateI"] == -1]
-    tag_objects = [x for x in all_tag_objects if x["stateI"] != -1]
-    projects = {x["id"]: x["name"] for x in project_objects if x["name"]}
-    project_by_id = {x["id"]: x for x in project_objects}
-    project_task_counts: Counter[str] = Counter(x["project_id"] for x in tasks if x["project_id"])
-    task_tag_refs: Counter[str] = Counter()
-    for task in tasks:
-        task_tag_refs.update(x for x in task["tags_raw"].split(",") if x)
-    tag_by_id = {x["id"]: x for x in all_tag_objects}
-    tag_name_by_id = {x["id"]: x["name"] for x in all_tag_objects}
-    tag_rows = [
-        {
-            "id": tag["id"],
-            "name": tag["name"],
-            "color": tag["color"],
-            "order": tag["orderI"] if tag["orderI"] is not None else tag["orderN"],
-            "task_count": task_tag_refs.get(tag["id"], 0),
-        }
-        for tag in tag_objects
-    ]
-    for tag_id, task_count in task_tag_refs.items():
-        if tag_id not in tag_by_id:
-            tag_rows.append({"id": tag_id, "name": "[name not found]", "color": "", "order": None, "task_count": task_count})
-    tag_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))
-    task_rows = []
-    for task in tasks:
-        ids = [x for x in task["tags_raw"].split(",") if x]
-        task_rows.append({
-            "id": task["id"],
-            "name": task["name"],
-            "projectId": task["project_id"],
-            "project_name": projects.get(task["project_id"], ""),
-            "tags": task["tags_raw"],
-            "tag_names": "; ".join(tag_name_by_id.get(x, f"[unknown ID: {x}]") for x in ids),
-            "creationDate": task["creationDateN_ms"],
-            "created_at_utc": timestamp_utc(task["creationDateN_ms"]),
-            "deadline": task["deadlineN_ms"],
-            "deadline_at_utc": timestamp_utc(task["deadlineN_ms"]),
-            "finishedDate": task["finishedDateN_ms"],
-            "finished_at_utc": timestamp_utc(task["finishedDateN_ms"]),
-            "endDate": task["endDateN_ms"],
-            "end_at_utc": timestamp_utc(task["endDateN_ms"]),
-            "isFinished": task["isFinished"],
-            "priority": task["priorityI"],
-            "estimatePomoNum": task["estimatePomoNumI"],
-            "estimatedPomoNum": task["estimatedPomoNumI"],
-            "actualPomoNum": task["actualPomoNumI"],
-            "pomodoroInterval": task["pomodoroIntervalI"],
-            "reminderDate": task["reminderDateI"],
-            "remark": task["remark"],
-            "rCycle": task["rCycleI"],
-            "rFirstDeadline": task["rFirstDeadlineI"],
-            "rUnit": task["rUnit"],
-            "rValue": task["rValue"],
-            "rStartDate": task["rStartDateI"],
-            "rEndDate": task["rEndDateI"],
-            "hasSubtask": task["hasSubtask"],
-            "isExpanded": task["isExpanded"],
-            "order": task["orderI"] if task["orderI"] is not None else task["orderN"],
-        })
-    task_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))
-    project_rows = []
-    for project in project_objects:
-        project_rows.append({
-            "id": project["id"],
-            "name": project["name"],
-            "color": project["color"],
-            "parentId": project["parent_id"],
-            "parent_name": project_by_id.get(project["parent_id"], {}).get("name", ""),
-            "type": project["typeI"],
-            "object_kind": {1000: "PROJECT", 2000: "FOLDER"}.get(project["typeI"], "UNKNOWN"),
-            "order": project["orderI"] if project["orderI"] is not None else project["orderN"],
-            "isDefault": project["is_default"],
-            "imageName": project["image_name"],
-            "task_count": project_task_counts.get(project["id"], 0),
-        })
-    project_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with (output_dir / "FocusToDo_tasks.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        task_fields = [
-            "id", "name", "projectId", "project_name", "tags", "tag_names",
-            "creationDate", "created_at_utc", "deadline", "deadline_at_utc",
-            "finishedDate", "finished_at_utc", "endDate", "end_at_utc",
-            "isFinished", "priority", "estimatePomoNum", "estimatedPomoNum",
-            "actualPomoNum", "pomodoroInterval", "reminderDate", "remark", "rCycle",
-            "rFirstDeadline", "rUnit", "rValue", "rStartDate", "rEndDate", "hasSubtask",
-            "isExpanded", "order",
-        ]
-        writer = csv.DictWriter(f, fieldnames=task_fields, delimiter=";")
-        writer.writeheader()
-        writer.writerows(task_rows)
-    with (output_dir / "FocusToDo_tags.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["id", "name", "color", "order", "task_count"], delimiter=";")
-        writer.writeheader()
-        writer.writerows(tag_rows)
-    with (output_dir / "FocusToDo_projects.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["id", "name", "color", "parentId", "parent_name", "type", "object_kind", "order", "isDefault", "imageName", "task_count"], delimiter=";")
-        writer.writeheader()
-        writer.writerows(project_rows)
-    missing_names = [x["id"] for x in tasks if not x["name"]]
-    print(f"IndexedDB base: {db_dir}")
-    print(f"Tasks exported: {len(task_rows)}")
-    print(f"Deleted tasks excluded: {len(deleted_tasks)}")
-    print(f"Deleted tags excluded: {len(deleted_tags)}")
-    print(f"Deleted projects/folders excluded: {len(deleted_projects)}")
-    print(f"Distinct referenced tags: {len(tag_rows)}")
-    print(f"Projects exported: {len(project_rows)}")
-    print(f"Tasks with undecoded names: {len(missing_names)}")
-    if missing_names:
-        print("Affected IDs: " + ", ".join(missing_names))
-    print("Files written:")
-    print(" - " + str(output_dir / "FocusToDo_tasks.csv"))
-    print(" - " + str(output_dir / "FocusToDo_tags.csv"))
-    print(" - " + str(output_dir / "FocusToDo_projects.csv"))
-
-
 def main():
     parser = argparse.ArgumentParser(description="Export FocusToDo data from the WebView2 IndexedDB")
     parser.add_argument("data_path", nargs="?", type=Path, default=DEFAULT_DATA_PATH,
                         help=f"FocusToDo data folder or IndexedDB folder (default: {DEFAULT_DATA_PATH})")
     parser.add_argument("--out", type=Path, default=Path.cwd(), help="Output folder (defaults to the current directory)")
-    parser.add_argument("--raw-json", action="store_true",
-                        help="Write the current LevelDB key/value snapshot as reversible Base64 JSON instead of CSV exports")
     args = parser.parse_args()
     db_dir = locate_db(args.data_path.expanduser().resolve())
-    if args.raw_json:
-        records = latest_leveldb_records(db_dir)
-        output_file = args.out.expanduser().resolve() / "FocusToDo_indexeddb_raw.json"
-        write_raw_json(records, output_file, db_dir)
-        print(f"IndexedDB base: {db_dir}")
-        print(f"Logical records exported: {len(records)}")
-        print(f"Raw JSON written: {output_file}")
-        return
-    objects = extract_objects(db_dir)
-    write_exports(objects, args.out.expanduser().resolve(), db_dir)
+    records = latest_leveldb_records(db_dir)
+    output_file = args.out.expanduser().resolve() / "FocusToDo_indexeddb_raw.json"
+    write_raw_json(records, output_file, db_dir)
+    print(f"IndexedDB base: {db_dir}")
+    print(f"Logical records exported: {len(records)}")
+    print(f"Raw JSON written: {output_file}")
 
 if __name__ == "__main__":
     try:

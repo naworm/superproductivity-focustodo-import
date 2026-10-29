@@ -284,7 +284,8 @@ def serialized_value(data: bytes, pos: int) -> tuple[Any, int]:
 
 
 def serialized_object(value: bytes) -> dict[str, Any] | None:
-    header = value.find(b"\xff\x0f")
+    headers = [value.find(marker) for marker in (b"\xff\x0f", b"\xff\x10")]
+    header = min((position for position in headers if position >= 0), default=-1)
     if header < 0 or header + 2 >= len(value) or value[header + 2] != ord("o"):
         return None
     pos = header + 3

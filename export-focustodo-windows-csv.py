@@ -33,6 +33,7 @@ def read_snapshot(json_file: Path) -> list[dict]:
     with json_file.open("r", encoding="utf-8") as source:
         snapshot = json.load(source)
     supported_formats = {
+        "leveldb-indexeddb-prepared-snapshot-v2",
         "leveldb-indexeddb-prepared-snapshot-v1",
         "leveldb-indexeddb-logical-snapshot-v1",
     }
@@ -45,21 +46,21 @@ def read_snapshot(json_file: Path) -> list[dict]:
 
 
 def write_exports(objects: list[dict], output_dir: Path, json_file: Path) -> None:
-    all_tasks = [x for x in objects if x["type"] == "TASK"]
-    deleted_tasks = [x for x in all_tasks if x["stateI"] == -1]
-    tasks = [x for x in all_tasks if x["stateI"] != -1]
-    all_project_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] in (1000, 2000)]
-    deleted_projects = [x for x in all_project_objects if x["stateI"] == -1]
-    project_objects = [x for x in all_project_objects if x["stateI"] != -1]
-    all_tag_objects = [x for x in objects if x["type"] == "PROJECT" and x["typeI"] == 3000]
-    deleted_tags = [x for x in all_tag_objects if x["stateI"] == -1]
-    tag_objects = [x for x in all_tag_objects if x["stateI"] != -1]
+    all_tasks = [x for x in objects if x.get("objType") == "TASK"]
+    deleted_tasks = [x for x in all_tasks if x.get("state") == -1]
+    tasks = [x for x in all_tasks if x.get("state") != -1]
+    all_project_objects = [x for x in objects if x.get("objType") == "PROJECT" and x.get("type") in (1000, 2000)]
+    deleted_projects = [x for x in all_project_objects if x.get("state") == -1]
+    project_objects = [x for x in all_project_objects if x.get("state") != -1]
+    all_tag_objects = [x for x in objects if x.get("objType") == "PROJECT" and x.get("type") == 3000]
+    deleted_tags = [x for x in all_tag_objects if x.get("state") == -1]
+    tag_objects = [x for x in all_tag_objects if x.get("state") != -1]
     projects = {x["id"]: x["name"] for x in project_objects if x["name"]}
     project_by_id = {x["id"]: x for x in project_objects}
-    project_task_counts: Counter[str] = Counter(x["project_id"] for x in tasks if x["project_id"])
+    project_task_counts: Counter[str] = Counter(x.get("projectId", "") for x in tasks if x.get("projectId"))
     task_tag_refs: Counter[str] = Counter()
     for task in tasks:
-        task_tag_refs.update(x for x in task["tags_raw"].split(",") if x)
+        task_tag_refs.update(x for x in task.get("tags", "").split(",") if x)
     tag_by_id = {x["id"]: x for x in all_tag_objects}
     tag_name_by_id = {x["id"]: x["name"] for x in all_tag_objects}
     tag_rows = [
@@ -67,7 +68,7 @@ def write_exports(objects: list[dict], output_dir: Path, json_file: Path) -> Non
             "id": tag["id"],
             "name": tag["name"],
             "color": tag["color"],
-            "order": tag["orderI"] if tag["orderI"] is not None else tag["orderN"],
+            "order": tag.get("order"),
             "task_count": task_tag_refs.get(tag["id"], 0),
         }
         for tag in tag_objects
@@ -78,39 +79,39 @@ def write_exports(objects: list[dict], output_dir: Path, json_file: Path) -> Non
     tag_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))
     task_rows = []
     for task in tasks:
-        ids = [x for x in task["tags_raw"].split(",") if x]
+        ids = [x for x in task.get("tags", "").split(",") if x]
         task_rows.append({
             "id": task["id"],
-            "name": task["name"],
-            "projectId": task["project_id"],
-            "project_name": projects.get(task["project_id"], ""),
-            "tags": task["tags_raw"],
+            "name": task.get("name", ""),
+            "projectId": task.get("projectId", ""),
+            "project_name": projects.get(task.get("projectId", ""), ""),
+            "tags": task.get("tags", ""),
             "tag_names": "; ".join(tag_name_by_id.get(x, f"[unknown ID: {x}]") for x in ids),
-            "creationDate": task["creationDateN_ms"],
-            "created_at_utc": timestamp_utc(task["creationDateN_ms"]),
-            "deadline": task["deadlineN_ms"],
-            "deadline_at_utc": timestamp_utc(task["deadlineN_ms"]),
-            "finishedDate": task["finishedDateN_ms"],
-            "finished_at_utc": timestamp_utc(task["finishedDateN_ms"]),
-            "endDate": task["endDateN_ms"],
-            "end_at_utc": timestamp_utc(task["endDateN_ms"]),
-            "isFinished": task["isFinished"],
-            "priority": task["priorityI"],
-            "estimatePomoNum": task["estimatePomoNumI"],
-            "estimatedPomoNum": task["estimatedPomoNumI"],
-            "actualPomoNum": task["actualPomoNumI"],
-            "pomodoroInterval": task["pomodoroIntervalI"],
-            "reminderDate": task["reminderDateI"],
-            "remark": task["remark"],
-            "rCycle": task["rCycleI"],
-            "rFirstDeadline": task["rFirstDeadlineI"],
-            "rUnit": task["rUnit"],
-            "rValue": task["rValue"],
-            "rStartDate": task["rStartDateI"],
-            "rEndDate": task["rEndDateI"],
-            "hasSubtask": task["hasSubtask"],
-            "isExpanded": task["isExpanded"],
-            "order": task["orderI"] if task["orderI"] is not None else task["orderN"],
+            "creationDate": task.get("creationDate"),
+            "created_at_utc": timestamp_utc(task.get("creationDate")),
+            "deadline": task.get("deadline"),
+            "deadline_at_utc": timestamp_utc(task.get("deadline")),
+            "finishedDate": task.get("finishedDate"),
+            "finished_at_utc": timestamp_utc(task.get("finishedDate")),
+            "endDate": task.get("endDate"),
+            "end_at_utc": timestamp_utc(task.get("endDate")),
+            "isFinished": task.get("isFinished"),
+            "priority": task.get("priority"),
+            "estimatePomoNum": task.get("estimatePomoNum"),
+            "estimatedPomoNum": task.get("estimatedPomoNum"),
+            "actualPomoNum": task.get("actualPomoNum"),
+            "pomodoroInterval": task.get("pomodoroInterval"),
+            "reminderDate": task.get("reminderDate"),
+            "remark": task.get("remark", ""),
+            "rCycle": task.get("rCycle"),
+            "rFirstDeadline": task.get("rFirstDeadline"),
+            "rUnit": task.get("rUnit", ""),
+            "rValue": task.get("rValue", ""),
+            "rStartDate": task.get("rStartDate"),
+            "rEndDate": task.get("rEndDate"),
+            "hasSubtask": task.get("hasSubtask"),
+            "isExpanded": task.get("isExpanded"),
+            "order": task.get("order"),
         })
     task_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))
     project_rows = []
@@ -118,14 +119,14 @@ def write_exports(objects: list[dict], output_dir: Path, json_file: Path) -> Non
         project_rows.append({
             "id": project["id"],
             "name": project["name"],
-            "color": project["color"],
-            "parentId": project["parent_id"],
-            "parent_name": project_by_id.get(project["parent_id"], {}).get("name", ""),
-            "type": project["typeI"],
-            "object_kind": {1000: "PROJECT", 2000: "FOLDER"}.get(project["typeI"], "UNKNOWN"),
-            "order": project["orderI"] if project["orderI"] is not None else project["orderN"],
-            "isDefault": project["is_default"],
-            "imageName": project["image_name"],
+            "color": project.get("color", ""),
+            "parentId": project.get("parentId", ""),
+            "parent_name": project_by_id.get(project.get("parentId", ""), {}).get("name", ""),
+            "type": project.get("type"),
+            "object_kind": {1000: "PROJECT", 2000: "FOLDER"}.get(project.get("type"), "UNKNOWN"),
+            "order": project.get("order"),
+            "isDefault": project.get("isDefault"),
+            "imageName": project.get("imageName", ""),
             "task_count": project_task_counts.get(project["id"], 0),
         })
     project_rows.sort(key=lambda x: (x["name"].casefold(), x["id"]))

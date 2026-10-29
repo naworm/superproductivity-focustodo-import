@@ -19,12 +19,12 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import math
 import os
 import re
 import struct
 import sys
 from pathlib import Path
+from typing import Any
 
 DB_RELATIVE = Path("LocalState") / "EBWebView" / "Default" / "IndexedDB" / "file__0.indexeddb.leveldb"
 DEFAULT_DATA_PATH = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Packages" / "52299SuperElement.119436511DDC8_792yctbvabkar"
@@ -248,68 +248,53 @@ def latest_leveldb_records(db_dir: Path) -> dict[bytes, tuple[int, int, bytes]]:
     return current
 
 
-def property_start(value: bytes, property_name: str) -> int | None:
-    start = value.find(b"\xff\x15\xfe")
-    offset = 0
-    if start >= 0:
-        value = value[start:]
-        offset = start
-    marker = b'"' + bytes([len(property_name)]) + property_name.encode("ascii")
-    pos = value.find(marker)
-    if pos < 0:
-        return None
-    return offset + pos + len(marker)
-
-
-def property_string(value: bytes, property_name: str) -> str | None:
-    pos = property_start(value, property_name)
-    if pos is None:
-        return None
-    if pos >= len(value):
-        return None
-    tag = value[pos]
+def serialized_string(data: bytes, pos: int) -> tuple[str, int]:
+    tag = data[pos]
     pos += 1
-    # Some two-byte strings have a zero marker before the V8 'c' string tag.
-    if tag == 0 and pos < len(value) and value[pos] in (0x63, 0x76, 0x56):
-        tag = value[pos]
-        pos += 1
     if tag not in (0x22, 0x63, 0x76, 0x56):
-        return None
-    try:
-        length, pos = varint(value, pos)
-    except ValueError:
-        return None
-    if pos + length > len(value):
-        return None
-    raw = value[pos:pos+length]
+        raise ValueError(f"Unsupported IndexedDB property key encoding: {data[pos - 1:pos + 12].hex()}")
+    length, pos = varint(data, pos)
+    if pos + length > len(data):
+        raise ValueError("Truncated IndexedDB string")
+    raw = data[pos:pos + length]
     if tag == 0x22:
-        # V8 one-byte strings represent Latin-1 code points, not UTF-8 bytes.
-        return raw.decode("latin-1")
-    return raw.decode("utf-16le", errors="replace")
+        return raw.decode("latin-1"), pos + length
+    return raw.decode("utf-16le", errors="replace"), pos + length
 
 
-def property_typed(value: bytes, property_name: str, expected_tag: str):
-    pos = property_start(value, property_name)
-    if pos is None or pos >= len(value):
-        return None
-    tag = chr(value[pos])
+def serialized_value(data: bytes, pos: int) -> tuple[Any, int]:
+    tag = data[pos]
     pos += 1
-    if expected_tag == "B":
-        return tag == "T" if tag in ("T", "F") else None
-    if tag != expected_tag:
+    if tag in (0x22, 0x63, 0x76, 0x56):
+        return serialized_string(data, pos - 1)
+    if tag == ord("T"):
+        return True, pos
+    if tag == ord("F"):
+        return False, pos
+    if tag == ord("0"):
+        return None, pos
+    if tag == ord("I"):
+        number, pos = varint(data, pos)
+        return (number >> 1) ^ -(number & 1), pos
+    if tag == ord("N"):
+        if pos + 8 > len(data):
+            raise ValueError("Truncated IndexedDB number")
+        return struct.unpack_from("<d", data, pos)[0], pos + 8
+    raise ValueError(f"Unsupported IndexedDB value tag: {tag:#x}")
+
+
+def serialized_object(value: bytes) -> dict[str, Any] | None:
+    header = value.find(b"\xff\x0f")
+    if header < 0 or header + 2 >= len(value) or value[header + 2] != ord("o"):
         return None
-    if tag == "N":
-        if pos + 8 > len(value):
-            return None
-        number = struct.unpack_from("<d", value, pos)[0]
-        return number if math.isfinite(number) else None
-    if tag == "I":
-        try:
-            number, _ = varint(value, pos)
-        except ValueError:
-            return None
-        return (number >> 1) ^ -(number & 1)
-    return None
+    pos = header + 3
+    obj: dict[str, Any] = {}
+    while pos < len(value) and value[pos] != ord("{"):
+        key, pos = serialized_string(value, pos)
+        obj[key], pos = serialized_value(value, pos)
+    if pos >= len(value) or value[pos] != ord("{"):
+        raise ValueError("Unterminated IndexedDB object")
+    return obj
 
 
 def extract_objects(db_dir: Path, records: dict[bytes, tuple[int, int, bytes]] | None = None):
@@ -317,58 +302,13 @@ def extract_objects(db_dir: Path, records: dict[bytes, tuple[int, int, bytes]] |
         records = latest_leveldb_records(db_dir)
     objects = []
     for _, (sequence, kind, value) in records.items():
-        if kind != 1 or b"objType" not in value:
+        if kind != 1:
             continue
-        obj_type = property_string(value, "objType")
-        if obj_type not in ("TASK", "PROJECT", "TAG"):
+        obj = serialized_object(value)
+        if obj is None or obj.get("objType") not in ("TASK", "PROJECT", "TAG"):
             continue
-        obj_id = property_string(value, "id")
-        if not obj_id:
+        if not obj.get("id"):
             continue
-        obj = {
-            "id": obj_id,
-            "type": obj_type,
-            "name": property_string(value, "name") or "",
-            "tags_raw": property_string(value, "tags") or "",
-            "project_id": property_string(value, "projectId") or "",
-            "sequence": sequence,
-        }
-        if obj_type == "TASK":
-            for field, source, tag in (
-                ("creationDateN_ms", "creationDate", "N"),
-                ("deadlineN_ms", "deadline", "N"),
-                ("finishedDateN_ms", "finishedDate", "N"),
-                ("endDateN_ms", "endDate", "N"),
-                ("stateI", "state", "I"),
-                ("priorityI", "priority", "I"),
-                ("estimatePomoNumI", "estimatePomoNum", "I"),
-                ("estimatedPomoNumI", "estimatedPomoNum", "I"),
-                ("actualPomoNumI", "actualPomoNum", "I"),
-                ("pomodoroIntervalI", "pomodoroInterval", "I"),
-                ("reminderDateI", "reminderDate", "I"),
-                ("rCycleI", "rCycle", "I"),
-                ("rFirstDeadlineI", "rFirstDeadline", "I"),
-                ("rStartDateI", "rStartDate", "I"),
-                ("rEndDateI", "rEndDate", "I"),
-                ("orderI", "order", "I"),
-                ("orderN", "order", "N"),
-            ):
-                obj[field] = property_typed(value, source, tag)
-            for field, source in (("rUnit", "rUnit"), ("rValue", "rValue"), ("remark", "remark")):
-                obj[field] = property_string(value, source) or ""
-            for field, source in (("isFinished", "isFinished"), ("hasSubtask", "hasSubtask"), ("isExpanded", "isExpanded")):
-                obj[field] = property_typed(value, source, "B")
-        elif obj_type == "PROJECT":
-            obj.update({
-                "color": property_string(value, "color") or "",
-                "parent_id": property_string(value, "parentId") or "",
-                "typeI": property_typed(value, "type", "I"),
-                "stateI": property_typed(value, "state", "I"),
-                "orderI": property_typed(value, "order", "I"),
-                "orderN": property_typed(value, "order", "N"),
-                "is_default": property_typed(value, "isDefault", "B"),
-                "image_name": property_string(value, "imageName") or "",
-            })
         objects.append(obj)
     return objects
 
@@ -392,7 +332,7 @@ def write_raw_json(records: dict[bytes, tuple[int, int, bytes]], output_file: Pa
         ],
     }
     prepared_snapshot = {
-        "format": "leveldb-indexeddb-prepared-snapshot-v1",
+        "format": "leveldb-indexeddb-prepared-snapshot-v2",
         "source": str(db_dir),
         "decoded_object_count": len(decoded_objects),
         "decoded_objects": decoded_objects,

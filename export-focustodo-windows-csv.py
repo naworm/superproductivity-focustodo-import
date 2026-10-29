@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Export CSV files from a FocusToDo IndexedDB JSON snapshot.
+"""Export CSV files from a prepared FocusToDo IndexedDB JSON snapshot.
 
 Usage:
     py export-focustodo-windows-csv.py
-    py export-focustodo-windows-csv.py "C:\\path\\to\\FocusToDo_indexeddb_raw.json"
+    py export-focustodo-windows-csv.py "C:\\path\\to\\FocusToDo_indexeddb.json"
     py export-focustodo-windows-csv.py --out "C:\\path\\to\\exports"
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 import sys
 
 
-DEFAULT_JSON_PATH = Path.cwd() / "FocusToDo_indexeddb_raw.json"
+DEFAULT_JSON_PATH = Path.cwd() / "FocusToDo_indexeddb.json"
 
 
 def timestamp_utc(milliseconds) -> str:
@@ -32,7 +32,11 @@ def timestamp_utc(milliseconds) -> str:
 def read_snapshot(json_file: Path) -> list[dict]:
     with json_file.open("r", encoding="utf-8") as source:
         snapshot = json.load(source)
-    if not isinstance(snapshot, dict) or snapshot.get("format") != "leveldb-indexeddb-logical-snapshot-v1":
+    supported_formats = {
+        "leveldb-indexeddb-prepared-snapshot-v1",
+        "leveldb-indexeddb-logical-snapshot-v1",
+    }
+    if not isinstance(snapshot, dict) or snapshot.get("format") not in supported_formats:
         raise ValueError(f"Unsupported FocusToDo JSON snapshot: {json_file}")
     objects = snapshot.get("decoded_objects")
     if not isinstance(objects, list) or any(not isinstance(obj, dict) for obj in objects):

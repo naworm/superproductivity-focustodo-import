@@ -9,9 +9,11 @@ Usage on Windows:
     py extract-focustodo-windows-data.py --out "C:\\path\\to\\exports"
 
 The positional path can be the FocusToDo data folder or the IndexedDB folder.
-By default, the script writes FocusToDo_indexeddb_raw.json in the current
-directory. Use --out to choose another output directory. To export CSV files,
-run export-focustodo-windows-csv.py.
+By default, the script writes FocusToDo_indexeddb_raw.json and
+FocusToDo_indexeddb.json in the current directory. The raw file preserves
+LevelDB keys and values as base64; the prepared file contains decoded objects.
+Use --out to choose another output directory. To export CSV files, run
+export-focustodo-windows-csv.py.
 """
 from __future__ import annotations
 import argparse
@@ -373,13 +375,11 @@ def extract_objects(db_dir: Path, records: dict[bytes, tuple[int, int, bytes]] |
 
 def write_raw_json(records: dict[bytes, tuple[int, int, bytes]], output_file: Path, db_dir: Path) -> None:
     decoded_objects = extract_objects(db_dir, records)
-    snapshot = {
-        "format": "leveldb-indexeddb-logical-snapshot-v1",
+    raw_snapshot = {
+        "format": "leveldb-indexeddb-raw-snapshot-v1",
         "source": str(db_dir),
         "encoding": "base64 for key and value bytes",
         "record_count": len(records),
-        "decoded_object_count": len(decoded_objects),
-        "decoded_objects": decoded_objects,
         "records": [
             {
                 "key_base64": base64.b64encode(key).decode("ascii"),
@@ -391,10 +391,18 @@ def write_raw_json(records: dict[bytes, tuple[int, int, bytes]], output_file: Pa
             for key, (sequence, kind, value) in sorted(records.items())
         ],
     }
+    prepared_snapshot = {
+        "format": "leveldb-indexeddb-prepared-snapshot-v1",
+        "source": str(db_dir),
+        "decoded_object_count": len(decoded_objects),
+        "decoded_objects": decoded_objects,
+    }
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    with output_file.open("w", encoding="utf-8", newline="\n") as file:
-        json.dump(snapshot, file, ensure_ascii=False, indent=2)
-        file.write("\n")
+    prepared_file = output_file.with_name("FocusToDo_indexeddb.json")
+    for path, snapshot in ((output_file, raw_snapshot), (prepared_file, prepared_snapshot)):
+        with path.open("w", encoding="utf-8", newline="\n") as file:
+            json.dump(snapshot, file, ensure_ascii=False, indent=2)
+            file.write("\n")
 
 
 def main():
@@ -407,9 +415,11 @@ def main():
     records = latest_leveldb_records(db_dir)
     output_file = args.out.expanduser().resolve() / "FocusToDo_indexeddb_raw.json"
     write_raw_json(records, output_file, db_dir)
+    prepared_file = output_file.with_name("FocusToDo_indexeddb.json")
     print(f"IndexedDB base: {db_dir}")
     print(f"Logical records exported: {len(records)}")
     print(f"Raw JSON written: {output_file}")
+    print(f"Prepared JSON written: {prepared_file}")
 
 if __name__ == "__main__":
     try:

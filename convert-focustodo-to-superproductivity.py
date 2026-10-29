@@ -162,7 +162,7 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
         if "tag_ids" in row:
             row["tags"] = row["tag_ids"]
         if "isFinishedF" in row or "isFinishedT" in row:
-            row["isFinished"] = row.get("isFinishedT", "").strip().lower() == "true"
+            row["isFinished"] = row.get("isFinishedT", "").strip().lower()
         if "orderN" in row and not row.get("order"):
             row["order"] = row["orderN"]
     tag_rows = add_aliases(tag_rows, {"id": "tag_id", "name": "tag_name"})
@@ -197,7 +197,7 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
         tag_id = row.get("id", "")
         if not tag_id:
             continue
-        entity = copy.deepcopy(template_tag)
+        entity: dict[str, Any] = copy.deepcopy(template_tag)
         color = row.get("color", "").strip().lstrip("#")
         entity.update({"id": tag_id, "title": row.get("name", ""), "color": "#" + color if color else None})
         if len(color) == 6 and all(char in "0123456789abcdefABCDEF" for char in color):

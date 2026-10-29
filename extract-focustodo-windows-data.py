@@ -263,6 +263,10 @@ def serialized_string(data: bytes, pos: int) -> tuple[str, int]:
 
 
 def serialized_value(data: bytes, pos: int) -> tuple[Any, int]:
+    while pos < len(data) and data[pos] == 0:
+        pos += 1
+    if pos >= len(data):
+        raise ValueError("Missing IndexedDB value tag")
     tag = data[pos]
     pos += 1
     if tag in (0x22, 0x63, 0x76, 0x56):

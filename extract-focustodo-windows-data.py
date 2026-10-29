@@ -404,7 +404,7 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
     ]
     for tag_id, task_count in task_tag_refs.items():
         if tag_id not in tag_by_id:
-            tag_rows.append({"tag_id": tag_id, "tag_name": "[nom introuvable]", "color": "", "order": None, "task_count": task_count})
+            tag_rows.append({"tag_id": tag_id, "tag_name": "[name not found]", "color": "", "order": None, "task_count": task_count})
     tag_rows.sort(key=lambda x: (x["tag_name"].casefold(), x["tag_id"]))
     task_rows = []
     for task in tasks:
@@ -414,7 +414,7 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
             "task_name": task["name"],
             "project_id": task["project_id"],
             "project_name": projects.get(task["project_id"], ""),
-            "tags": "; ".join(tag_name_by_id.get(x, f"[ID inconnu: {x}]") for x in ids),
+            "tags": "; ".join(tag_name_by_id.get(x, f"[unknown ID: {x}]") for x in ids),
             "tag_ids": "; ".join(ids),
             "creationDateN_ms": task["creationDateN_ms"],
             "created_at_utc": timestamp_utc(task["creationDateN_ms"]),
@@ -485,26 +485,26 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
         writer.writeheader()
         writer.writerows(project_rows)
     missing_names = [x["id"] for x in tasks if not x["name"]]
-    print(f"Base IndexedDB : {db_dir}")
-    print(f"Tâches exportées : {len(task_rows)}")
-    print(f"Tâches supprimées exclues : {len(deleted_tasks)}")
-    print(f"Tags supprimés exclus : {len(deleted_tags)}")
-    print(f"Projets/dossiers supprimés exclus : {len(deleted_projects)}")
-    print(f"Tags distincts référencés : {len(tag_rows)}")
-    print(f"Projets exportés : {len(project_rows)}")
-    print(f"Tâches sans nom décodé : {len(missing_names)}")
+    print(f"IndexedDB base: {db_dir}")
+    print(f"Tasks exported: {len(task_rows)}")
+    print(f"Deleted tasks excluded: {len(deleted_tasks)}")
+    print(f"Deleted tags excluded: {len(deleted_tags)}")
+    print(f"Deleted projects/folders excluded: {len(deleted_projects)}")
+    print(f"Distinct referenced tags: {len(tag_rows)}")
+    print(f"Projects exported: {len(project_rows)}")
+    print(f"Tasks with undecoded names: {len(missing_names)}")
     if missing_names:
-        print("Identifiants concernés : " + ", ".join(missing_names))
-    print("Fichiers écrits :")
+        print("Affected IDs: " + ", ".join(missing_names))
+    print("Files written:")
     print(" - " + str(output_dir / "FocusToDo_tasks.csv"))
     print(" - " + str(output_dir / "FocusToDo_tags.csv"))
     print(" - " + str(output_dir / "FocusToDo_projects.csv"))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Export des tâches et tags FocusToDo à partir de l'IndexedDB WebView2")
-    parser.add_argument("data_path", type=Path, help="Dossier des données FocusToDo ou dossier IndexedDB")
-    parser.add_argument("--out", type=Path, default=Path.cwd(), help="Dossier de sortie (défaut : répertoire courant)")
+    parser = argparse.ArgumentParser(description="Export FocusToDo tasks and tags from the WebView2 IndexedDB")
+    parser.add_argument("data_path", type=Path, help="FocusToDo data folder or IndexedDB folder")
+    parser.add_argument("--out", type=Path, default=Path.cwd(), help="Output folder (defaults to the current directory)")
     args = parser.parse_args()
     db_dir = locate_db(args.data_path.expanduser().resolve())
     objects = extract_objects(db_dir)
@@ -514,5 +514,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(f"ERREUR : {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)

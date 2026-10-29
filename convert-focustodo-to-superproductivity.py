@@ -132,7 +132,7 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
     data = copy.deepcopy(template)
     source = data.get("data")
     if not isinstance(source, dict):
-        raise ValueError("Le modèle ne contient pas d'objet 'data' Super Productivity.")
+        raise ValueError("The template does not contain a Super Productivity 'data' object.")
 
     task_data = source.setdefault("task", {})
     project_data = source.setdefault("project", {})
@@ -145,7 +145,7 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
     })
     inbox_template = project_entities.get(INBOX_PROJECT_ID)
     if inbox_template is None:
-        raise ValueError("Le modèle doit contenir le projet INBOX_PROJECT.")
+        raise ValueError("The template must contain the INBOX_PROJECT project.")
     template_tag = next(iter(tag_entities.values()), {"theme": {}})
 
     task_rows = add_aliases(task_rows, {
@@ -205,7 +205,7 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
         if not task_id:
             continue
         if task_id in task_entities_out:
-            raise ValueError(f"Identifiant de tâche dupliqué : {task_id}")
+            raise ValueError(f"Duplicate task ID: {task_id}")
         requested_project = row.get("projectId", "")
         target_project = requested_project if requested_project in project_ids else INBOX_PROJECT_ID
         task_entities_out[task_id] = make_task(row, target_project, valid_tag_ids, template_task)
@@ -234,12 +234,12 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convertit les exports CSV FocusToDo en backup JSON Super Productivity.")
-    parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE, help="Backup JSON modèle (par défaut : modèle minimal fourni)")
-    parser.add_argument("--tasks", type=Path, default=Path("FocusToDo_tasks.csv"), help="Export CSV des tâches")
-    parser.add_argument("--tags", type=Path, default=Path("FocusToDo_tags.csv"), help="Export CSV des tags")
-    parser.add_argument("--projects", type=Path, default=Path("FocusToDo_projects.csv"), help="Export CSV des projets")
-    parser.add_argument("--out", type=Path, default=Path("super-productivity-import.json"), help="Fichier JSON à créer")
+    parser = argparse.ArgumentParser(description="Convert FocusToDo CSV exports into a Super Productivity backup JSON.")
+    parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE, help="Template backup JSON (defaults to the provided minimal template)")
+    parser.add_argument("--tasks", type=Path, default=Path("FocusToDo_tasks.csv"), help="Tasks CSV export")
+    parser.add_argument("--tags", type=Path, default=Path("FocusToDo_tags.csv"), help="Tags CSV export")
+    parser.add_argument("--projects", type=Path, default=Path("FocusToDo_projects.csv"), help="Projects CSV export")
+    parser.add_argument("--out", type=Path, default=Path("super-productivity-import.json"), help="Output JSON file to create")
     args = parser.parse_args()
 
     with args.template.expanduser().open("r", encoding="utf-8-sig") as source:
@@ -255,15 +255,15 @@ def main() -> None:
     with output.open("w", encoding="utf-8", newline="\n") as destination:
         json.dump(result, destination, ensure_ascii=False, indent=2)
         destination.write("\n")
-    print(f"JSON Super Productivity créé : {output}")
-    print(f"Tâches : {len(result['data']['task']['ids'])}")
-    print(f"Projets importés : {len([project_id for project_id in result['data']['project']['ids'] if project_id != INBOX_PROJECT_ID])}")
-    print(f"Tags importés : {len(read_csv(args.tags.expanduser()))}")
+    print(f"Super Productivity JSON created: {output}")
+    print(f"Tasks: {len(result['data']['task']['ids'])}")
+    print(f"Projects imported: {len([project_id for project_id in result['data']['project']['ids'] if project_id != INBOX_PROJECT_ID])}")
+    print(f"Tags imported: {len(read_csv(args.tags.expanduser()))}")
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(f"ERREUR : {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)

@@ -6,9 +6,13 @@ Works with Python 3.10+ and the standard library only. Close FocusToDo before ru
 Usage on Windows:
     py extract-focustodo-windows-data.py
     py extract-focustodo-windows-data.py "C:\\path\\to\\FocusToDo data folder"
+    py extract-focustodo-windows-data.py --out "C:\\path\\to\\exports"
+    py extract-focustodo-windows-data.py --raw-json --out "C:\\path\\to\\exports"
 
-The script writes FocusToDo_tasks.csv, FocusToDo_tags.csv, and FocusToDo_projects.csv
-in the current directory.
+The positional path can be the FocusToDo data folder or the IndexedDB folder.
+By default, the script writes FocusToDo_tasks.csv, FocusToDo_tags.csv, and
+FocusToDo_projects.csv in the current directory. Use --out to choose another
+output directory. With --raw-json, it writes FocusToDo_indexeddb_raw.json instead.
 """
 from __future__ import annotations
 import argparse

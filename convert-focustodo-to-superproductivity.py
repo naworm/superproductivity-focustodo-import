@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Convert FocusToDo CSV exports into a Super Productivity backup JSON."""
+"""Convert FocusToDo CSV exports into a Super Productivity backup JSON.
+
+Usage:
+    python convert-focustodo-to-superproductivity.py
+    python convert-focustodo-to-superproductivity.py --tasks tasks.csv --tags tags.csv \
+        --projects projects.csv --template backup.json --out import.json
+
+By default, the script reads FocusToDo_tasks.csv, FocusToDo_tags.csv, and
+FocusToDo_projects.csv from the current directory, uses the minimal template
+provided alongside this script, and writes super-productivity-import.json.
+"""
 from __future__ import annotations
 
 import argparse

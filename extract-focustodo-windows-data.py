@@ -12,8 +12,10 @@ in the current directory.
 """
 from __future__ import annotations
 import argparse
+import base64
 import csv
 from datetime import datetime, timezone
+import json
 import math
 import os
 import re
@@ -317,8 +319,9 @@ def timestamp_utc(milliseconds) -> str:
         return ""
 
 
-def extract_objects(db_dir: Path):
-    records = latest_leveldb_records(db_dir)
+def extract_objects(db_dir: Path, records: dict[bytes, tuple[int, int, bytes]] | None = None):
+    if records is None:
+        records = latest_leveldb_records(db_dir)
     objects = []
     for _, (sequence, kind, value) in records.items():
         if kind != 1 or b"objType" not in value:
@@ -375,6 +378,32 @@ def extract_objects(db_dir: Path):
             })
         objects.append(obj)
     return objects
+
+
+def write_raw_json(records: dict[bytes, tuple[int, int, bytes]], output_file: Path, db_dir: Path) -> None:
+    decoded_objects = extract_objects(db_dir, records)
+    snapshot = {
+        "format": "leveldb-indexeddb-logical-snapshot-v1",
+        "source": str(db_dir),
+        "encoding": "base64 for key and value bytes",
+        "record_count": len(records),
+        "decoded_object_count": len(decoded_objects),
+        "decoded_objects": decoded_objects,
+        "records": [
+            {
+                "key_base64": base64.b64encode(key).decode("ascii"),
+                "sequence": sequence,
+                "kind": kind,
+                "deleted": kind == 0,
+                "value_base64": base64.b64encode(value).decode("ascii"),
+            }
+            for key, (sequence, kind, value) in sorted(records.items())
+        ],
+    }
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with output_file.open("w", encoding="utf-8", newline="\n") as file:
+        json.dump(snapshot, file, ensure_ascii=False, indent=2)
+        file.write("\n")
 
 
 def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
@@ -502,12 +531,22 @@ def write_exports(objects: list[dict], output_dir: Path, db_dir: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Export FocusToDo tasks and tags from the WebView2 IndexedDB")
+    parser = argparse.ArgumentParser(description="Export FocusToDo data from the WebView2 IndexedDB")
     parser.add_argument("data_path", nargs="?", type=Path, default=DEFAULT_DATA_PATH,
                         help=f"FocusToDo data folder or IndexedDB folder (default: {DEFAULT_DATA_PATH})")
     parser.add_argument("--out", type=Path, default=Path.cwd(), help="Output folder (defaults to the current directory)")
+    parser.add_argument("--raw-json", action="store_true",
+                        help="Write the current LevelDB key/value snapshot as reversible Base64 JSON instead of CSV exports")
     args = parser.parse_args()
     db_dir = locate_db(args.data_path.expanduser().resolve())
+    if args.raw_json:
+        records = latest_leveldb_records(db_dir)
+        output_file = args.out.expanduser().resolve() / "FocusToDo_indexeddb_raw.json"
+        write_raw_json(records, output_file, db_dir)
+        print(f"IndexedDB base: {db_dir}")
+        print(f"Logical records exported: {len(records)}")
+        print(f"Raw JSON written: {output_file}")
+        return
     objects = extract_objects(db_dir)
     write_exports(objects, args.out.expanduser().resolve(), db_dir)
 

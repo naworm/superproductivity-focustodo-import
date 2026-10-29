@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 INBOX_PROJECT_ID = "INBOX_PROJECT"
+DEFAULT_TEMPLATE = Path(__file__).resolve().with_name("super-productivity-template.json")
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -234,7 +235,7 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Convertit les exports CSV FocusToDo en backup JSON Super Productivity.")
-    parser.add_argument("--template", type=Path, required=True, help="Backup JSON exemple de Super Productivity")
+    parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE, help="Backup JSON modèle (par défaut : modèle minimal fourni)")
     parser.add_argument("--tasks", type=Path, default=Path("FocusToDo_tasks.csv"), help="Export CSV des tâches")
     parser.add_argument("--tags", type=Path, default=Path("FocusToDo_tags.csv"), help="Export CSV des tags")
     parser.add_argument("--projects", type=Path, default=Path("FocusToDo_projects.csv"), help="Export CSV des projets")

@@ -165,14 +165,42 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
     tag_data = source.setdefault("tag", {})
     task_entities = task_data.get("entities", {})
     project_entities = project_data.get("entities", {})
-    tag_entities = tag_data.get("entities", {})
     template_task = next(iter(task_entities.values()), {
-        "subTaskIds": [], "timeSpentOnDay": {}, "attachments": [],
+        "id": "",
+        "subTaskIds": [],
+        "timeSpentOnDay": {},
+        "timeSpent": 0,
+        "timeEstimate": 0,
+        "isDone": False,
+        "title": "",
+        "tagIds": [],
+        "created": 0,
+        "attachments": [],
+        "projectId": INBOX_PROJECT_ID,
+        "dueDay": None,
+        "modified": 0,
     })
     inbox_template = project_entities.get(INBOX_PROJECT_ID)
     if inbox_template is None:
         raise ValueError("The template must contain the INBOX_PROJECT project.")
-    template_tag = next(iter(tag_entities.values()), {"theme": {}})
+    template_tag = next(iter(tag_data.get("entities", {}).values()), {
+        "color": None,
+        "created": 0,
+        "advancedCfg": {
+            "worklogExportSettings": {
+                "cols": ["DATE", "START", "END", "TIME_CLOCK", "TITLES_INCLUDING_SUB"],
+                "roundWorkTimeTo": None,
+                "roundStartTimeTo": None,
+                "roundEndTimeTo": None,
+                "separateTasksBy": " | ",
+                "groupBy": "DATE",
+            }
+        },
+        "taskIds": [],
+        "icon": None,
+        "id": "",
+        "title": "",
+    })
 
     imported_projects = [
         row for row in project_rows
@@ -198,7 +226,7 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
             entity.setdefault("theme", {})["primary"] = "#" + color
         project_entities_out[row["id"]] = entity
 
-    tag_entities_out = copy.deepcopy(tag_entities)
+    tag_entities_out: dict[str, dict[str, Any]] = {}
     for row in tag_rows:
         tag_id = row.get("id", "")
         if not tag_id:
@@ -236,8 +264,9 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
 
     menu_tree = source.setdefault("menuTree", {})
     menu_tree["projectTree"] = project_tree(project_rows)
-    tag_tree = menu_tree.setdefault("tagTree", [])
-    existing_tag_ids = collect_tree_ids(tag_tree)
+    tag_tree: list[dict[str, Any]] = []
+    menu_tree["tagTree"] = tag_tree
+    existing_tag_ids: set[str] = set()
     for row in tag_rows:
         tag_id = row.get("id", "")
         if tag_id and tag_id not in existing_tag_ids:

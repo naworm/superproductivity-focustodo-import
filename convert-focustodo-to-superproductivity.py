@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Convert FocusToDo CSV exports into a Super Productivity backup JSON.
+"""Convert FocusToDo JSON snapshot exports into a Super Productivity backup JSON.
 
 Usage:
     python convert-focustodo-to-superproductivity.py
-    python convert-focustodo-to-superproductivity.py --tasks tasks.csv --tags tags.csv \
-        --projects projects.csv --template backup.json --out import.json
+    python convert-focustodo-to-superproductivity.py --json FocusToDo_indexeddb.json \
+        --template sp-backup_2026-10-30_004811.json --out import.json
 
-By default, the script reads FocusToDo_tasks.csv, FocusToDo_tags.csv, and
-FocusToDo_projects.csv from the current directory, uses the minimal template
-provided alongside this script, and writes super-productivity-import.json.
+By default, the script reads the FocusToDo IndexedDB snapshot JSON generated in
+this folder, uses the real Super Productivity backup model from this workspace,
+and writes super-productivity-import.json.
 """
 from __future__ import annotations
 
 import argparse
 import copy
-import csv
 import json
 import sys
 from datetime import datetime
@@ -25,9 +24,61 @@ INBOX_PROJECT_ID = "INBOX_PROJECT"
 DEFAULT_TEMPLATE = Path(__file__).resolve().with_name("super-productivity-template.json")
 
 
-def read_csv(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as source:
-        return list(csv.DictReader(source, delimiter=";"))
+def read_json_snapshot(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    with path.open("r", encoding="utf-8-sig") as source:
+        payload = json.load(source)
+    if not isinstance(payload, dict):
+        raise ValueError(f"The file {path} does not contain a JSON object.")
+    decoded_objects = payload.get("decoded_objects", [])
+    if not isinstance(decoded_objects, list):
+        raise ValueError(f"The JSON file {path} does not contain a 'decoded_objects' list.")
+
+    task_rows: list[dict[str, Any]] = []
+    project_rows: list[dict[str, Any]] = []
+    tag_rows: list[dict[str, Any]] = []
+    for row in decoded_objects:
+        if not isinstance(row, dict):
+            continue
+        state_value = row.get("state")
+        if state_value not in (0, "0", None):
+            try:
+                if int(state_value) != 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+        obj_type = str(row.get("objType", "")).upper()
+        if obj_type == "TASK":
+            task_rows.append(row)
+        elif obj_type == "PROJECT":
+            project_type = normalize_type(row.get("type"))
+            if project_type == "3000":
+                tag_rows.append(row)
+            elif not is_system_project(row):
+                project_rows.append(row)
+    return task_rows, project_rows, tag_rows
+
+
+def normalize_type(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+    return str(value).strip()
+
+
+def is_system_project(row: dict[str, Any]) -> bool:
+    project_id = str(row.get("id", ""))
+    name = str(row.get("name", ""))
+    if project_id.startswith("id-") or name.startswith("PRJ_"):
+        return True
+    return normalize_type(row.get("type")) in {
+        "4000", "4001", "4002", "4003", "4004", "4005", "4006", "4007",
+        "5001", "5002", "5003", "7000", "7001", "7002", "7003", "7004", "7005"
+    }
 
 
 def number(value: Any, default: float = 0) -> float:
@@ -48,19 +99,12 @@ def day_from_timestamp(value: Any) -> str | None:
     return datetime.fromtimestamp(milliseconds / 1000).date().isoformat()
 
 
-def task_tag_ids(value: str, valid_ids: set[str]) -> list[str]:
-    return [tag_id.strip() for tag_id in value.replace(";", ",").split(",") if tag_id.strip() in valid_ids]
-
-
-def add_aliases(rows: list[dict[str, str]], aliases: dict[str, str]) -> list[dict[str, str]]:
-    normalized_rows = []
-    for row in rows:
-        normalized = dict(row)
-        for target, source in aliases.items():
-            if target not in normalized and source in row:
-                normalized[target] = row[source]
-        normalized_rows.append(normalized)
-    return normalized_rows
+def task_tag_ids(value: Any, valid_ids: set[str]) -> list[str]:
+    if isinstance(value, list):
+        raw_value = ",".join(str(item) for item in value)
+    else:
+        raw_value = str(value)
+    return [tag_id.strip() for tag_id in raw_value.replace(";", ",").split(",") if tag_id.strip() in valid_ids]
 
 
 def make_task(row: dict[str, str], project_id: str, tag_ids: set[str], template_task: dict[str, Any]) -> dict[str, Any]:
@@ -91,43 +135,14 @@ def make_task(row: dict[str, str], project_id: str, tag_ids: set[str], template_
 
 
 def project_tree(project_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
-    folders = {row["id"]: row for row in project_rows if row.get("type") == "2000"}
-    projects = [row for row in project_rows if row.get("type") == "1000"]
-    nodes: dict[str, dict[str, Any]] = {
-        folder_id: {
-            "k": "f",
-            "id": folder_id,
-            "name": row.get("name", ""),
-            "isExpanded": row.get("expanded", "").strip().lower() == "true",
-            "children": [],
-        }
-        for folder_id, row in folders.items()
-    }
-    for row in projects:
-        nodes[row["id"]] = {"k": "p", "id": row["id"]}
-
+    projects = [
+        row for row in project_rows
+        if not is_system_project(row) and normalize_type(row.get("type")) == "1000"
+    ]
     roots: list[tuple[float, dict[str, Any]]] = []
-    for row in project_rows:
-        node = nodes.get(row.get("id", ""))
-        if node is None:
-            continue
-        parent_id = row.get("parentId", "")
-        parent = nodes.get(parent_id) if parent_id in folders else None
-        ordered_node = (number(row.get("order")), node)
-        if parent is None:
-            roots.append(ordered_node)
-        else:
-            parent["children"].append(ordered_node)
-
-    def unpack(items: list[tuple[float, dict[str, Any]]]) -> list[dict[str, Any]]:
-        result = []
-        for _, node in sorted(items, key=lambda item: item[0]):
-            if node["k"] == "f":
-                node["children"] = unpack(node["children"])
-            result.append(node)
-        return result
-
-    return unpack(roots)
+    for row in projects:
+        roots.append((number(row.get("order")), {"k": "p", "id": row["id"]}))
+    return [{"k": "p", "id": row["id"]} for _, row in sorted(roots, key=lambda item: item[0])]
 
 
 def collect_tree_ids(nodes: list[dict[str, Any]]) -> set[str]:
@@ -159,29 +174,10 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
         raise ValueError("The template must contain the INBOX_PROJECT project.")
     template_tag = next(iter(tag_entities.values()), {"theme": {}})
 
-    task_rows = add_aliases(task_rows, {
-        "id": "task_id", "name": "task_name", "projectId": "project_id",
-        "creationDate": "creationDateN_ms", "deadline": "deadlineN_ms",
-        "finishedDate": "finishedDateN_ms", "endDate": "endDateN_ms",
-        "priority": "priorityI", "actualPomoNum": "actualPomoNumI",
-        "estimatePomoNum": "estimatePomoNumI", "estimatedPomoNum": "estimatedPomoNumI",
-        "pomodoroInterval": "pomodoroIntervalI", "reminderDate": "reminderDateI",
-        "order": "orderI", "isFinished": "isFinishedT",
-    })
-    for row in task_rows:
-        if "tag_ids" in row:
-            row["tags"] = row["tag_ids"]
-        if "isFinishedF" in row or "isFinishedT" in row:
-            row["isFinished"] = row.get("isFinishedT", "").strip().lower()
-        if "orderN" in row and not row.get("order"):
-            row["order"] = row["orderN"]
-    tag_rows = add_aliases(tag_rows, {"id": "tag_id", "name": "tag_name"})
-    project_rows = add_aliases(project_rows, {
-        "id": "project_id", "name": "project_name", "parentId": "parent_id",
-        "isDefault": "is_default", "imageName": "image_name",
-    })
-
-    imported_projects = [row for row in project_rows if row.get("type") == "1000"]
+    imported_projects = [
+        row for row in project_rows
+        if not is_system_project(row) and normalize_type(row.get("type")) == "1000"
+    ]
     project_ids = {row["id"] for row in imported_projects}
     project_entities_out = {INBOX_PROJECT_ID: copy.deepcopy(inbox_template)}
     project_entities_out[INBOX_PROJECT_ID]["taskIds"] = []
@@ -251,22 +247,20 @@ def convert(template: dict[str, Any], task_rows: list[dict[str, str]], tag_rows:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert FocusToDo CSV exports into a Super Productivity backup JSON.")
-    parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE, help="Template backup JSON (defaults to the provided minimal template)")
-    parser.add_argument("--tasks", type=Path, default=Path("FocusToDo_tasks.csv"), help="Tasks CSV export")
-    parser.add_argument("--tags", type=Path, default=Path("FocusToDo_tags.csv"), help="Tags CSV export")
-    parser.add_argument("--projects", type=Path, default=Path("FocusToDo_projects.csv"), help="Projects CSV export")
+    parser = argparse.ArgumentParser(description="Convert FocusToDo JSON snapshots into a Super Productivity backup JSON.")
+    parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE, help="Template backup JSON used as Super Productivity model")
+    parser.add_argument("--json", "--input", dest="json_input", type=Path, default=Path("FocusToDo_indexeddb.json"), help="FocusToDo IndexedDB prepared snapshot JSON")
     parser.add_argument("--out", type=Path, default=Path("super-productivity-import.json"), help="Output JSON file to create")
     args = parser.parse_args()
 
+    if not args.json_input.expanduser().exists():
+        raise FileNotFoundError(f"The FocusToDo snapshot JSON was not found: {args.json_input.expanduser()}")
+
     with args.template.expanduser().open("r", encoding="utf-8-sig") as source:
         template = json.load(source)
-    result = convert(
-        template,
-        read_csv(args.tasks.expanduser()),
-        read_csv(args.tags.expanduser()),
-        read_csv(args.projects.expanduser()),
-    )
+
+    task_rows, project_rows, tag_rows = read_json_snapshot(args.json_input.expanduser())
+    result = convert(template, task_rows, tag_rows, project_rows)
     output = args.out.expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8", newline="\n") as destination:
@@ -275,7 +269,7 @@ def main() -> None:
     print(f"Super Productivity JSON created: {output}")
     print(f"Tasks: {len(result['data']['task']['ids'])}")
     print(f"Projects imported: {len([project_id for project_id in result['data']['project']['ids'] if project_id != INBOX_PROJECT_ID])}")
-    print(f"Tags imported: {len(read_csv(args.tags.expanduser()))}")
+    print(f"Tags imported: {len(result['data']['tag']['ids'])}")
 
 
 if __name__ == "__main__":
